@@ -5,6 +5,7 @@ const morgan = require('morgan');
 const prisma = require('./lib/prisma');
 const authRoutes = require('./routes/auth.routes');
 const adminRoutes = require('./routes/admin.routes');
+const landRoutes = require('./routes/land.routes');
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.get('/api/health', async (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api', landRoutes);
 
 // Anything else
 app.use((req, res) => {
