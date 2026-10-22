@@ -1,0 +1,258 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+
+enum Role {
+  CITIZEN
+  LAND_OFFICER
+  TAX_OFFICIAL
+  GIS_OFFICER
+  SYSTEM_ADMIN
+}
+
+enum TransferStatus {
+  draft
+  submitted
+  tax_verified
+  tax_hold
+  under_review
+  docs_requested
+  approved
+  rejected
+  cancelled
+}
+
+enum TaxStatus {
+  unpaid
+  partial
+  paid
+}
+
+enum PaymentMethod {
+  telebirr
+  cash
+}
+
+enum PaymentStatus {
+  initiated
+  pending
+  completed
+  failed
+  expired
+  refunded
+}
+
+enum AppointmentStatus {
+  scheduled
+  completed
+  cancelled
+  no_show
+}
+
+// ---------- Tables ----------
+
+model User {
+  id                Int      @id @default(autoincrement())
+  email             String?  @unique
+  phone_number      String   @unique
+  password_hash     String
+  role              Role     @default(CITIZEN)
+  is_active         Boolean  @default(true)
+  is_phone_verified Boolean  @default(false)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  owner                    Owner?
+  transfers_created        TransferRequest[]    @relation("TransferCreatedBy")
+  transfers_assigned       TransferRequest[]    @relation("TransferAssignedTo")
+  payments_made            PaymentTransaction[] @relation("Payer")
+  payments_recorded        PaymentTransaction[] @relation("RecordedBy")
+  audit_logs               AuditLog[]
+  appointments_as_citizen  Appointment[]        @relation("AppointmentCitizen")
+  appointments_as_officer  Appointment[]        @relation("AppointmentOfficer")
+
+  @@map("users")
+}
+
+model Owner {
+  id           Int      @id @default(autoincrement())
+  user_id      Int?     @unique
+  full_name    String
+  national_id  String   @unique
+  phone_number String?
+  address      String?
+  created_at   DateTime @default(now())
+
+  user               User?             @relation(fields: [user_id], references: [id])
+  parcels            LandParcel[]
+  transfers_as_seller TransferRequest[] @relation("Seller")
+  transfers_as_buyer  TransferRequest[] @relation("Buyer")
+  registry_from      RegistryEntry[]   @relation("RegistryFrom")
+  registry_to        RegistryEntry[]   @relation("RegistryTo")
+
+  @@map("owners")
+}
+
+model LandParcel {
+  id               Int      @id @default(autoincrement())
+  parcel_number    String   @unique
+  current_owner_id Int?
+  kebele           String
+  sub_city         String?
+  area_sqm         Decimal  @db.Decimal(12, 2)
+  land_use         String
+  property_type    String?
+  boundary         Unsupported("geometry(Polygon,4326)")?
+  cis_reference    String?
+  version          Int      @default(1)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  owner            Owner?            @relation(fields: [current_owner_id], references: [id])
+  transfers        TransferRequest[]
+  tax_records      TaxRecord[]
+  registry_entries RegistryEntry[]
+
+  @@index([current_owner_id])
+  @@map("land_parcels")
+}
+
+model TransferRequest {
+  id                  Int            @id @default(autoincrement())
+  tracking_id         String         @unique
+  parcel_id           Int
+  seller_id           Int
+  buyer_id            Int
+  created_by_id       Int
+  assigned_officer_id Int?
+  status              TransferStatus @default(draft)
+  sale_price          Decimal?       @db.Decimal(14, 2)
+  documents           Json           @default("[]")
+  officer_notes       String?
+  rejection_reason    String?
+  version             Int            @default(1)
+  submitted_at        DateTime?
+  decided_at          DateTime?
+  created_at          DateTime       @default(now())
+  updated_at          DateTime       @updatedAt
+
+  parcel           LandParcel     @relation(fields: [parcel_id], references: [id])
+  seller           Owner          @relation("Seller", fields: [seller_id], references: [id])
+  buyer            Owner          @relation("Buyer", fields: [buyer_id], references: [id])
+  created_by       User           @relation("TransferCreatedBy", fields: [created_by_id], references: [id])
+  assigned_officer User?          @relation("TransferAssignedTo", fields: [assigned_officer_id], references: [id])
+  registry_entry   RegistryEntry?
+
+  @@index([status])
+  @@map("transfer_requests")
+}
+
+model TaxRecord {
+  id          Int       @id @default(autoincrement())
+  parcel_id   Int
+  tax_year    Int
+  tax_amount  Decimal   @db.Decimal(12, 2)
+  paid_amount Decimal   @default(0) @db.Decimal(12, 2)
+  due_date    DateTime?
+  status      TaxStatus @default(unpaid)
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  parcel   LandParcel           @relation(fields: [parcel_id], references: [id])
+  payments PaymentTransaction[]
+
+  @@unique([parcel_id, tax_year])
+  @@map("tax_records")
+}
+
+model PaymentTransaction {
+  id             Int           @id @default(autoincrement())
+  transaction_ref String       @unique
+  tax_record_id  Int
+  payer_id       Int
+  recorded_by_id Int?
+  amount         Decimal       @db.Decimal(12, 2)
+  method         PaymentMethod
+  status         PaymentStatus @default(initiated)
+  webhook_payload Json?
+  receipt_url    String?
+  created_at     DateTime      @default(now())
+  updated_at     DateTime      @updatedAt
+
+  tax_record  TaxRecord @relation(fields: [tax_record_id], references: [id])
+  payer       User      @relation("Payer", fields: [payer_id], references: [id])
+  recorded_by User?     @relation("RecordedBy", fields: [recorded_by_id], references: [id])
+
+  @@map("payment_transactions")
+}
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  user_id     Int?
+  action      String
+  entity_type String
+  entity_id   String?
+  old_values  Json?
+  new_values  Json?
+  ip_address  String?
+  hash_chain  String
+  created_at  DateTime @default(now())
+
+  user User? @relation(fields: [user_id], references: [id])
+
+  @@index([user_id, created_at])
+  @@map("audit_logs")
+}
+
+model Appointment {
+  id             Int               @id @default(autoincrement())
+  citizen_id     Int
+  officer_id     Int
+  scheduled_date DateTime          @db.Date
+  time_slot      String
+  purpose        String?
+  status         AppointmentStatus @default(scheduled)
+  reminder_sent  Boolean           @default(false)
+  created_at     DateTime          @default(now())
+
+  citizen User @relation("AppointmentCitizen", fields: [citizen_id], references: [id])
+  officer User @relation("AppointmentOfficer", fields: [officer_id], references: [id])
+
+  @@unique([officer_id, scheduled_date, time_slot])
+  @@index([officer_id, scheduled_date])
+  @@map("appointments")
+}
+
+model RegistryEntry {
+  id                 Int      @id @default(autoincrement())
+  parcel_id          Int
+  from_owner_id      Int?
+  to_owner_id        Int
+  transfer_id        Int?     @unique
+  certificate_number String?  @unique
+  certificate_url    String?
+  registered_at      DateTime @default(now())
+
+  parcel     LandParcel       @relation(fields: [parcel_id], references: [id])
+  from_owner Owner?           @relation("RegistryFrom", fields: [from_owner_id], references: [id])
+  to_owner   Owner            @relation("RegistryTo", fields: [to_owner_id], references: [id])
+  transfer   TransferRequest? @relation(fields: [transfer_id], references: [id])
+
+  @@map("registry_entries")
+}
+
+// PostGIS lookup table. Do not remove: it already exists in the database.
+model spatial_ref_sys {
+  srid      Int     @id
+  auth_name String? @db.VarChar(256)
+  auth_srid Int?
+  srtext    String? @db.VarChar(2048)
+  proj4text String? @db.VarChar(2048)
+}
