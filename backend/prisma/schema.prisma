@@ -45,7 +45,7 @@ enum PaymentStatus {
   pending
   completed
   failed
-  expired
+  processing
   refunded
 }
 
@@ -176,7 +176,8 @@ model PaymentTransaction {
   id             Int           @id @default(autoincrement())
   transaction_ref String       @unique
   tax_record_id  Int
-  payer_id       Int
+  payer_id       Int?
+  payer_name      String?
   recorded_by_id Int?
   amount         Decimal       @db.Decimal(12, 2)
   method         PaymentMethod
@@ -187,7 +188,7 @@ model PaymentTransaction {
   updated_at     DateTime      @updatedAt
 
   tax_record  TaxRecord @relation(fields: [tax_record_id], references: [id])
-  payer       User      @relation("Payer", fields: [payer_id], references: [id])
+  payer       User?      @relation("Payer", fields: [payer_id], references: [id])
   recorded_by User?     @relation("RecordedBy", fields: [recorded_by_id], references: [id])
 
   @@map("payment_transactions")
@@ -255,4 +256,16 @@ model spatial_ref_sys {
   auth_srid Int?
   srtext    String? @db.VarChar(2048)
   proj4text String? @db.VarChar(2048)
+}
+model TaxRate {
+  id           Int      @id @default(autoincrement())
+  land_use     String
+  kebele       String?
+  rate_per_sqm Decimal  @db.Decimal(10, 4)
+  is_active    Boolean  @default(true)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@index([land_use, kebele])
+  @@map("tax_rates")
 }
